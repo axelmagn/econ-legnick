@@ -113,7 +113,7 @@ pub const Firms = struct {
     }
 
     pub fn onMonthStart(
-        self: *const Firm,
+        self: *const Firms,
         households_slice: *const HouseholdsSlice,
         households_order: []Id,
         random: Random,
@@ -131,9 +131,39 @@ pub const Firms = struct {
             manageWorkforce(&slice, i, &self.config, households_slice, households_order);
         }
 
-        // TODO:
-        // maybe update goods price
+        // update goods price
+        for (0..slice.len) |i| {
+            if (core.withProbability(self.config.theta, random)) {
+                setGoodsPrice(&slice, i);
+            }
+        }
+
         // reset monthly accumulators
+        for (0..slice.len) |i| {
+            slice.items(.current_demand)[i] = 0;
+        }
+    }
+
+    pub fn onMonthEnd(
+        self: *const Firms,
+        households_slice: *const HouseholdsSlice,
+        households_order: []Id,
+        random: Random,
+    ) void {
+
+        // TODO:
+        // pay wages
+        // check for hire failures
+    }
+
+    pub fn onDay(
+        self: *const Firms,
+        households_slice: *const HouseholdsSlice,
+        households_order: []Id,
+        random: Random,
+    ) void {
+        // TODO:
+        // produce goods
     }
 
     /// adjust wage rate
@@ -168,15 +198,11 @@ pub const Firms = struct {
         households_slice: HouseholdsSlice,
         households_order: []Id,
     ) void {
-        const inventory = &firms.items(.inventory)[firm_id];
-        const current_demand = &firms.items(.current_demand)[firm_id];
         const has_open_position = &firms.items(.has_open_position)[firm_id];
         const worker_on_notice = &firms.items(.worker_on_notice)[firm_id];
 
         // if inventory is too high, either cancel outstanding notice or offer a new position
-        const inventory_floor_f32 = config.inventory_lphi * @as(f32, @floatFromInt(current_demand.*));
-        const inventory_floor: GoodsAmount = @intFromFloat(std.math.ceil(inventory_floor_f32));
-        if (inventory.* < inventory_floor) {
+        if (inventoryTooLow(firms, firm_id, config)) {
             has_open_position.* = worker_on_notice.* == null;
             worker_on_notice.* = null;
         }
@@ -191,9 +217,7 @@ pub const Firms = struct {
         }
 
         // if inventories are too high give notice to a worker and cancel any open position
-        const inventory_ceiling_f32 = config.inventory_uphi * @as(f32, @floatFromInt(current_demand.*));
-        const inventory_ceiling: GoodsAmount = @intFromFloat(std.math.floor(inventory_ceiling_f32));
-        if (inventory.* > inventory_ceiling) {
+        if (inventoryTooHigh(firms, firm_id, config)) {
             // find a random employee to put on notice
             for (households_order) |household_id| {
                 if (households_slice.items(.employer)[household_id] == firm_id) {
@@ -204,15 +228,95 @@ pub const Firms = struct {
         }
     }
 
-    fn inventoryFloor(firms: *const Slice, firm_id: usize, config: *const FirmConfig) GoodsAmount {
-        const current_demand: GoodsAmount = &firms.items(.current_demand)[firm_id];
-        const floor_f32 = config.inventory_lphi * @as(f32, @floatFromInt(current_demand.*));
+    fn inventoryTooLow(
+        firms: *const Slice,
+        firm_id: usize,
+        config: *const FirmConfig,
+    ) GoodsAmount {
+        const inventory_floor = inventoryFloor(firms, firm_id, config);
+        const inventory = firms.items(.inventory)[firm_id];
+        return inventory < inventory_floor;
+    }
+
+    fn inventoryTooHigh(
+        firms: *const Slice,
+        firm_id: usize,
+        config: *const FirmConfig,
+    ) GoodsAmount {
+        const inventory_ceil = inventoryCeiling(firms, firm_id, config);
+        const inventory = firms.items(.inventory)[firm_id];
+        return inventory > inventory_ceil;
+    }
+
+    fn inventoryFloor(
+        firms: *const Slice,
+        firm_id: usize,
+        config: *const FirmConfig,
+    ) GoodsAmount {
+        const current_demand: GoodsAmount = firms.items(.current_demand)[firm_id];
+        const floor_f32 = config.inventory_lphi * @as(f32, @floatFromInt(current_demand));
         return @intFromFloat(std.math.ceil(floor_f32));
     }
 
-    fn inventoryCeiling(firms: *const Slice, firm_id: usize, config: *const FirmConfig) GoodsAmount {
-        const current_demand: GoodsAmount = &firms.items(.current_demand)[firm_id];
-        const floor_f32 = config.inventory_hphi * @as(f32, @floatFromInt(current_demand.*));
+    fn inventoryCeiling(
+        firms: *const Slice,
+        firm_id: usize,
+        config: *const FirmConfig,
+    ) GoodsAmount {
+        const current_demand: GoodsAmount = firms.items(.current_demand)[firm_id];
+        const floor_f32 = config.inventory_uphi * @as(f32, @floatFromInt(current_demand));
         return @intFromFloat(std.math.floor(floor_f32));
+    }
+
+    fn setGoodsPrice(
+        firms: *const Slice,
+        firm_id: Id,
+        config: *const FirmConfig,
+        random: Random,
+    ) void {
+        const inventory_too_low = inventoryTooLow(firms, firm_id, config);
+        const inventory_too_high = inventoryTooHigh(firms, firm_id, config);
+        if (!inventory_too_low and !inventory_too_high) return;
+
+        const price_adjustment = random.float(f32) * config.upsilon;
+        const goods_price = &firms.items(.goods_price)[firm_id];
+        var goods_price_f32: f32 = @floatFromInt(goods_price.*);
+        if (inventory_too_low) {
+            // raise prices
+            goods_price_f32 *= 1 + price_adjustment;
+        } else if (inventory_too_high) {
+            // lower prices
+            goods_price_f32 *= 1 - price_adjustment;
+        }
+
+        const price_floor = goodsPriceFloor(firms, firm_id, config);
+        const price_ceil = goodsPriceCeiling(firms, firm_id, config);
+        goods_price_f32 = std.math.clamp(
+            goods_price_f32,
+            @floatFromInt(price_floor),
+            @floatFromInt(price_ceil),
+        );
+
+        goods_price.* = @intFromFloat(goods_price_f32);
+    }
+
+    fn goodsPriceFloor(
+        firms: *const Slice,
+        firm_id: usize,
+        config: *const FirmConfig,
+    ) GoodsAmount {
+        const goods_price: GoodsAmount = firms.items(.goods_price)[firm_id];
+        const floor_f32 = config.goods_price_lphi * @as(f32, @floatFromInt(goods_price));
+        return @intFromFloat(std.math.ceil(floor_f32));
+    }
+
+    fn goodsPriceCeiling(
+        firms: *const Slice,
+        firm_id: usize,
+        config: *const FirmConfig,
+    ) GoodsAmount {
+        const goods_price: GoodsAmount = firms.items(.goods_price)[firm_id];
+        const ceil_f32 = config.goods_price_uphi * @as(f32, @floatFromInt(goods_price));
+        return @intFromFloat(std.math.floor(ceil_f32));
     }
 };
