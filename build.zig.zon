@@ -1,0 +1,7 @@
+.{
+    .name = .econ_legnick,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.16.0",
+    .paths = .{""},
+    .fingerprint = 0xd2b2ae1e82bc2a8,
+}
