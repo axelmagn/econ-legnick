@@ -1,11 +1,15 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
+const Random = std.Random;
 
 const core = @import("core.zig");
 const Id = core.Id;
 const Currency = core.Currency;
 const GoodsAmount = core.GoodsAmount;
+
+// const firms = @import("firms.zig");
+const FirmsSlice = @import("firms.zig").Firms.Slice;
 
 /// calibration settings for the household agent
 pub const HouseholdConfig = struct {
@@ -154,6 +158,51 @@ pub const Households = struct {
 
     pub fn deinit(self: *Households, gpa: Allocator) void {
         self.data.deinit(gpa);
+    }
+
+    pub fn onMonthStart(self: *Households, random: Random, firms: *const FirmsSlice) !void {
+        const slice = self.data.slice();
+
+        // find cheaper vendor
+        for (0..slice.len) |household_id| {
+            if (core.withProbability(self.config.psi_price, random)) {
+                findCheaperVendor(&slice, household_id, firms, random);
+            }
+        }
+
+        // TODO:
+        // dump a failed vendor
+        // clear the blackmark list
+        // look for a job if household wants to
+        // plan consumption
+    }
+
+    fn findCheaperVendor(households: *const Slice, household_id: Id, firms: *const FirmsSlice, random: Random, config: *const HouseholdConfig) void {
+        // pick a random existing supplier and calculate the price to beat
+        const preferred_suppliers_len = households.items(.preferred_suppliers_len)[household_id];
+        const preferred_suppliers = &households.item(.preferred_suppliers)[household_id];
+        const existing_supplier_idx = random.intRangeLessThan(Id, 0, preferred_suppliers_len);
+        const existing_supplier_id = preferred_suppliers[existing_supplier_idx];
+        const existing_price = firms.items(.goods_price)[existing_supplier_id];
+        const price_to_beat: f32 = @as(f32, @floatFromInt(existing_price)) * (1 - config.zeta);
+
+        // pick another random firm and switch if the price is right
+        var candidate_id = random.intRangeLessThan(Id, 0, firms.len);
+        while (true) {
+            var is_in_preferred = false;
+            for (0..preferred_suppliers_len) |i| {
+                if (preferred_suppliers[i] == candidate_id) {
+                    is_in_preferred = true;
+                    break;
+                }
+            }
+            if (!is_in_preferred) break;
+            candidate_id = random.intRangeLessThan(Id, 0, firms.len);
+        }
+        const candidate_price = firms.items(.goods_price)[candidate_id];
+        if (candidate_price < price_to_beat) {
+            preferred_suppliers[existing_supplier_idx] = candidate_id;
+        }
     }
 
     pub fn fireWorker(

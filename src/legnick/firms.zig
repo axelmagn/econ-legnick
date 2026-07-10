@@ -80,8 +80,8 @@ pub const Firms = struct {
     config: FirmConfig = .{},
     data: Table = .empty,
 
-    const Table = std.MultiArrayList(Firm);
-    const Slice = Table.Slice;
+    pub const Table = std.MultiArrayList(Firm);
+    pub const Slice = Table.Slice;
 
     pub fn populate(
         self: *Firms,
