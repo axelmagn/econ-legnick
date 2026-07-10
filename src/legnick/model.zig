@@ -35,9 +35,9 @@ pub const Model = struct {
 
     pub fn step(self: *Model, arena: std.mem.Allocator) !void {
         const random = self.prng.random();
-        const is_month_start = self.steps % self.month_length == 0;
-        const firms_slice = self.firms.slice();
-        const households_slice = self.households.slice();
+
+        const households_slice = self.households.data.slice();
+        // const firms_slice = self.firms.data.slice();
 
         // create a random shuffle of household IDs
         const num_households = self.households.data.len;
@@ -45,10 +45,16 @@ pub const Model = struct {
         for (0..num_households) |i| households_order[i] = i;
         random.shuffle(core.Id, households_order);
 
+        const is_month_start = self.steps % self.month_length == 0;
         if (is_month_start) {
             std.debug.print("step {} is the start of a new month\n", .{self.steps});
-            firms.Firms.onMonthStart(&firms_slice, &households_slice, households_order, random);
-            self.firms.onMonthStart(random);
+            self.firms.onMonthStart(&households_slice, households_order, random);
+        }
+        const is_month_end = (self.steps+1) % self.month_length == 0;
+        if (is_month_end) {
+            std.debug.print("step {} is the end of a month\n", .{self.steps});
+            try self.firms.onMonthEnd(&households_slice, arena);
+
         }
         self.steps += 1;
     }

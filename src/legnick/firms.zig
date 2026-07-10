@@ -134,7 +134,7 @@ pub const Firms = struct {
         // update goods price
         for (0..slice.len) |i| {
             if (core.withProbability(self.config.theta, random)) {
-                setGoodsPrice(&slice, i);
+                setGoodsPrice(&slice, i, &self.config, random);
             }
         }
 
@@ -147,20 +147,31 @@ pub const Firms = struct {
     pub fn onMonthEnd(
         self: *const Firms,
         households_slice: *const HouseholdsSlice,
-        households_order: []Id,
-        random: Random,
-    ) void {
+        arena: Allocator,
+    ) !void {
+        const slice = self.data.slice();
 
-        // TODO:
         // pay wages
+        try payWages(&slice, households_slice, arena);
+
         // check for hire failures
+        for (
+            slice.items(.has_open_position),
+            slice.items(.months_since_hire_failure),
+        ) |has_open_position, *months_since_hire_failure| {
+            if (has_open_position) {
+                months_since_hire_failure.* = 0;
+            } else {
+                months_since_hire_failure.* += 1;
+            }
+        }
     }
 
     pub fn onDay(
-        self: *const Firms,
-        households_slice: *const HouseholdsSlice,
-        households_order: []Id,
-        random: Random,
+        // self: *const Firms,
+        // households_slice: *const HouseholdsSlice,
+        // households_order: []Id,
+        // random: Random,
     ) void {
         // TODO:
         // produce goods
@@ -181,7 +192,6 @@ pub const Firms = struct {
             var wage_rate_f32: f32 = @floatFromInt(wage_rate.*);
             wage_rate_f32 *= 1 + random.floatNorm(f32) * config.delta;
             wage_rate.* = @intFromFloat(std.math.round(wage_rate_f32));
-            log.debug("firm {} raised wages to {}\n", .{ index, wage_rate.* });
         } else if (months_since_hire_failure.* >= config.gamma) { // should lower wage
             // lower wage
             var wage_rate_f32: f32 = @floatFromInt(wage_rate.*);
@@ -195,7 +205,7 @@ pub const Firms = struct {
         firms: *const Slice,
         firm_id: usize,
         config: *const FirmConfig,
-        households_slice: HouseholdsSlice,
+        households_slice: *const HouseholdsSlice,
         households_order: []Id,
     ) void {
         const has_open_position = &firms.items(.has_open_position)[firm_id];
@@ -209,7 +219,11 @@ pub const Firms = struct {
 
         // if a worker is on notice, fire them
         if (worker_on_notice.* != null) {
-            Households.fire_worker(households_slice, worker_on_notice.*) catch |err| {
+            Households.fireWorker(
+                households_slice,
+                worker_on_notice.*.?,
+                firm_id,
+            ) catch |err| {
                 // errors here indicate state inconsistency
                 std.debug.panic("fatal error while firing worker: {}\n", .{err});
             };
@@ -232,7 +246,7 @@ pub const Firms = struct {
         firms: *const Slice,
         firm_id: usize,
         config: *const FirmConfig,
-    ) GoodsAmount {
+    ) bool {
         const inventory_floor = inventoryFloor(firms, firm_id, config);
         const inventory = firms.items(.inventory)[firm_id];
         return inventory < inventory_floor;
@@ -242,7 +256,7 @@ pub const Firms = struct {
         firms: *const Slice,
         firm_id: usize,
         config: *const FirmConfig,
-    ) GoodsAmount {
+    ) bool {
         const inventory_ceil = inventoryCeiling(firms, firm_id, config);
         const inventory = firms.items(.inventory)[firm_id];
         return inventory > inventory_ceil;
@@ -293,8 +307,8 @@ pub const Firms = struct {
         const price_ceil = goodsPriceCeiling(firms, firm_id, config);
         goods_price_f32 = std.math.clamp(
             goods_price_f32,
-            @floatFromInt(price_floor),
-            @floatFromInt(price_ceil),
+            @as(f32, @floatFromInt(price_floor)),
+            @as(f32, @floatFromInt(price_ceil)),
         );
 
         goods_price.* = @intFromFloat(goods_price_f32);
@@ -318,5 +332,53 @@ pub const Firms = struct {
         const goods_price: GoodsAmount = firms.items(.goods_price)[firm_id];
         const ceil_f32 = config.goods_price_uphi * @as(f32, @floatFromInt(goods_price));
         return @intFromFloat(std.math.floor(ceil_f32));
+    }
+
+    fn payWages(
+        firms: *const Slice,
+        households_slice: *const HouseholdsSlice,
+        arena: Allocator,
+    ) error{OutOfMemory}!void {
+        // count workers for each firm
+        const num_workers_idx = try arena.alloc(usize, firms.len);
+        defer arena.free(num_workers_idx);
+        for (num_workers_idx) |*num_workers| {
+            num_workers.* = 0;
+        }
+        for (households_slice.items(.employer)) |employer| {
+            if (employer == null) continue;
+            num_workers_idx[employer.?] += 1;
+        }
+
+        // adjust firm wages
+        for (0..firms.len) |firm_id| {
+            const num_workers = num_workers_idx[firm_id];
+            // if liquidity is too low, we can't pay anyone
+            const liquidity = &firms.items(.liquidity)[firm_id];
+            const wage_rate = &firms.items(.wage_rate)[firm_id];
+            if (liquidity.* < num_workers) {
+                wage_rate.* = 0;
+                return;
+            }
+            // if we can't pay all of our workers, reduce wages
+            if (liquidity.* < num_workers * wage_rate.*) {
+                wage_rate.* = @divFloor(liquidity.*, num_workers);
+            }
+
+            // go ahead and decrement liquidity while we're in here
+            const firm_wages = wage_rate.* * num_workers;
+            assert(liquidity.* >= firm_wages);
+            liquidity.* -= firm_wages;
+        }
+
+        // pay out wages
+        for (
+            households_slice.items(.employer),
+            households_slice.items(.liquidity),
+        ) |employer, *liquidity| {
+            if (employer == null) continue;
+            const wage_rate = firms.items(.wage_rate)[employer.?];
+            liquidity.* += wage_rate;
+        }
     }
 };

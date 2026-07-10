@@ -156,8 +156,8 @@ pub const Households = struct {
         self.data.deinit(gpa);
     }
 
-    pub fn fire_worker(
-        households: Slice,
+    pub fn fireWorker(
+        households: *const Slice,
         index: usize,
         employer_index: usize,
     ) error{ AlreadyUnemployed, EmployerMismatch }!void {
