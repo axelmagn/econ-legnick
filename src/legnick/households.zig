@@ -177,7 +177,13 @@ pub const Households = struct {
         // plan consumption
     }
 
-    fn findCheaperVendor(households: *const Slice, household_id: Id, firms: *const FirmsSlice, random: Random, config: *const HouseholdConfig) void {
+    fn findCheaperVendor(
+        households: *const Slice,
+        household_id: Id,
+        firms: *const FirmsSlice,
+        random: Random,
+        config: *const HouseholdConfig,
+    ) void {
         // pick a random existing supplier and calculate the price to beat
         const preferred_suppliers_len = households.items(.preferred_suppliers_len)[household_id];
         const preferred_suppliers = &households.item(.preferred_suppliers)[household_id];
