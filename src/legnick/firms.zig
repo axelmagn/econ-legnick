@@ -168,13 +168,13 @@ pub const Firms = struct {
     }
 
     pub fn onDay(
-        // self: *const Firms,
-        // households_slice: *const HouseholdsSlice,
-        // households_order: []Id,
-        // random: Random,
-    ) void {
-        // TODO:
-        // produce goods
+        self: *const Firms,
+        households_slice: *const HouseholdsSlice,
+        labor_supply: f32,
+        arena: Allocator,
+    ) !void {
+        const slice = self.data.slice();
+        try produceOutput(&slice, &self.config, households_slice, labor_supply, arena);
     }
 
     /// adjust wage rate
@@ -379,6 +379,32 @@ pub const Firms = struct {
             if (employer == null) continue;
             const wage_rate = firms.items(.wage_rate)[employer.?];
             liquidity.* += wage_rate;
+        }
+    }
+
+    fn produceOutput(
+        firms: *const Slice,
+        config: *const FirmConfig,
+        households_slice: *const HouseholdsSlice,
+        labor_supply: f32,
+        arena: Allocator,
+    ) !void {
+        // sum labor power for each firm
+        const firm_labor_power = try arena.alloc(f32, firms.len);
+        defer arena.free(firm_labor_power);
+
+        for (firm_labor_power) |*labor_power_item| {
+            labor_power_item.* = 0;
+        }
+        for (households_slice.items(.employer)) |employer| {
+            if (employer == null) continue;
+            firm_labor_power[employer.?] += labor_supply;
+        }
+
+        // add inventory for each firm
+        for (0..firms.len, firms.items(.inventory)) |firm_id, *inventory| {
+            const production_amount = firm_labor_power[firm_id] * config.lambda_val;
+            inventory.* += @intFromFloat(production_amount);
         }
     }
 };

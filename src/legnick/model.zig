@@ -50,12 +50,16 @@ pub const Model = struct {
             std.debug.print("step {} is the start of a new month\n", .{self.steps});
             self.firms.onMonthStart(&households_slice, households_order, random);
         }
-        const is_month_end = (self.steps+1) % self.month_length == 0;
+        const is_month_end = (self.steps + 1) % self.month_length == 0;
         if (is_month_end) {
             std.debug.print("step {} is the end of a month\n", .{self.steps});
             try self.firms.onMonthEnd(&households_slice, arena);
-
         }
+        try self.firms.onDay(&households_slice, self.labor_supply, arena);
+
+        // record statistics
+        // TODO: use a real data structure instead of logging
+
         self.steps += 1;
     }
 };
