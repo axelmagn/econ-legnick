@@ -73,6 +73,7 @@ pub const Household = struct {
     blackmarked_firms_len: usize = 0,
     /// list of firms that have failed to supply this month
     blackmarked_firms: [max_firms]Id = undefined,
+    blackmarked_firms_weights: [max_firms]f32 = undefined,
 
     pub const max_firms = 8;
 
@@ -166,12 +167,18 @@ pub const Households = struct {
         // find cheaper vendor
         for (0..slice.len) |household_id| {
             if (core.withProbability(self.config.psi_price, random)) {
-                findCheaperVendor(&slice, household_id, firms, random);
+                findCheaperVendor(&slice, household_id, firms, random, &self.config);
+            }
+        }
+
+        // dump a failed vendor
+        for (0..slice.len) |household_id| {
+            if (core.withProbability(self.config.psi_quant, random)) {
+                findBetterVendor(&slice, household_id, firms, random);
             }
         }
 
         // TODO:
-        // dump a failed vendor
         // clear the blackmark list
         // look for a job if household wants to
         // plan consumption
@@ -184,9 +191,10 @@ pub const Households = struct {
         random: Random,
         config: *const HouseholdConfig,
     ) void {
-        // pick a random existing supplier and calculate the price to beat
         const preferred_suppliers_len = households.items(.preferred_suppliers_len)[household_id];
         const preferred_suppliers = &households.item(.preferred_suppliers)[household_id];
+
+        // pick a random existing supplier and calculate the price to beat
         const existing_supplier_idx = random.intRangeLessThan(Id, 0, preferred_suppliers_len);
         const existing_supplier_id = preferred_suppliers[existing_supplier_idx];
         const existing_price = firms.items(.goods_price)[existing_supplier_id];
@@ -208,6 +216,43 @@ pub const Households = struct {
         const candidate_price = firms.items(.goods_price)[candidate_id];
         if (candidate_price < price_to_beat) {
             preferred_suppliers[existing_supplier_idx] = candidate_id;
+        }
+    }
+
+    fn findBetterVendor(
+        households: *const Slice,
+        household_id: Id,
+        firms: *const FirmsSlice,
+        random: Random,
+    ) void {
+        const blackmarked_firms_len = households.items(.blackmarked_firms_len)[household_id];
+        const blackmarked_firms = &households.items(.blackmarked_firms)[household_id];
+        const blackmarked_firms_weights = &households.items(.blackmarked_firms_weights)[household_id];
+
+        // select a random blackmarked firm
+        const blackmarked_firm_idx = random.weightedIndex(f32, blackmarked_firms_weights[0..blackmarked_firms_len]);
+        const blackmarked_firm_id = blackmarked_firms[blackmarked_firm_idx];
+
+        // replace with a random new firm
+        const preferred_suppliers_len = households.items(.preferred_suppliers_len)[household_id];
+        const preferred_suppliers = &households.items(.preferred_suppliers)[household_id];
+        var candidate_id = random.intRangeLessThan(Id, 0, firms.len);
+        while (true) {
+            var is_in_preferred = false;
+            for (0..preferred_suppliers_len) |i| {
+                if (preferred_suppliers[i] == candidate_id) {
+                    is_in_preferred = true;
+                    break;
+                }
+            }
+            if (!is_in_preferred) break;
+            candidate_id = random.intRangeLessThan(Id, 0, firms.len);
+        }
+        for (0..preferred_suppliers_len) |i| {
+            if (preferred_suppliers[i] == blackmarked_firm_id) {
+                preferred_suppliers[i] = candidate_id;
+                break;
+            }
         }
     }
 

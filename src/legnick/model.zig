@@ -37,7 +37,7 @@ pub const Model = struct {
         const random = self.prng.random();
 
         const households_slice = self.households.data.slice();
-        // const firms_slice = self.firms.data.slice();
+        const firms_slice = self.firms.data.slice();
 
         // create a random shuffle of household IDs
         const num_households = self.households.data.len;
@@ -49,6 +49,7 @@ pub const Model = struct {
         if (is_month_start) {
             std.debug.print("step {} is the start of a new month\n", .{self.steps});
             self.firms.onMonthStart(&households_slice, households_order, random);
+            self.households.onMonthStart(random, &firms_slice);
         }
         const is_month_end = (self.steps + 1) % self.month_length == 0;
         if (is_month_end) {
