@@ -15,7 +15,7 @@ const HouseholdsSlice = households.Households.Slice;
 
 pub const FirmConfig = struct {
     /// amount of liquidity assigned to each firm at t=0
-    initial_liquidity: Currency = 0,
+    initial_liquidity: Currency = 128 * 3000,
 
     /// price of goods at each firm at t=0
     initial_goods_price: Currency = 3000,

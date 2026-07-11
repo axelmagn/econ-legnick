@@ -47,9 +47,54 @@ pub const Model = struct {
 
         const is_month_start = self.steps % self.month_length == 0;
         if (is_month_start) {
-            std.debug.print("step {} is the start of a new month\n", .{self.steps});
+            std.debug.print("\nstep {} is the start of a new month\n", .{self.steps});
             self.firms.onMonthStart(&households_slice, households_order, random);
             self.households.onMonthStart(random, &firms_slice, self.month_length);
+
+            // report summary statistics
+            
+            // avg wage
+            var avg_wage: f64 = 0;
+            for(households_slice.items(.employer)) |employer| {
+                if (employer != null) {
+                    const wage = firms_slice.items(.wage_rate)[employer.?];
+                    avg_wage += @floatFromInt(wage);
+                }
+            }
+            avg_wage /= @floatFromInt(households_slice.len);
+            std.debug.print("average wage: {}\n", .{avg_wage});
+
+            // avg inventory
+            var avg_inventory: f64 = 0;
+            for(firms_slice.items(.inventory)) |inventory|{
+                avg_inventory += @floatFromInt(inventory);
+            }
+            avg_inventory /= @floatFromInt(firms_slice.len);
+            std.debug.print("average inventory: {}\n", .{avg_inventory});
+
+            // avg price
+            var avg_goods_price: f64 = 0;
+            for(firms_slice.items(.goods_price)) |goods_price|{
+                avg_goods_price += @floatFromInt(goods_price);
+            }
+            avg_goods_price /= @floatFromInt(firms_slice.len);
+            std.debug.print("average goods price: {}\n", .{avg_goods_price});
+
+            // avg firm liquidity
+            var avg_firm_liquidity: f64 = 0;
+            for(firms_slice.items(.liquidity)) |firm_liquidity|{
+                avg_firm_liquidity += @floatFromInt(firm_liquidity);
+            }
+            avg_firm_liquidity /= @floatFromInt(firms_slice.len);
+            std.debug.print("average firm liquidity: {}\n", .{avg_firm_liquidity});
+
+            var avg_household_liquidity: f64 = 0;
+            for(households_slice.items(.liquidity)) |household_liquidity| {
+                avg_household_liquidity += @floatFromInt(household_liquidity);
+            }
+            avg_household_liquidity /= @floatFromInt(households_slice.len);
+            std.debug.print("average household liquidity: {}\n", .{avg_household_liquidity});
+
         }
         const is_month_end = (self.steps + 1) % self.month_length == 0;
         if (is_month_end) {

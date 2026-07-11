@@ -17,7 +17,7 @@ pub const HouseholdConfig = struct {
     initial_reservation_wage: Currency = 0,
 
     /// amount of liquidity assigned to each household at t=0
-    initial_liquidity: Currency = 0,
+    initial_liquidity: Currency = 30 * 3000,
 
     /// unemployed reservation wage decay rate
     wage_decay_rate: f32 = 0.9,
