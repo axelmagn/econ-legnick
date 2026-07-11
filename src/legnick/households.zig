@@ -178,10 +178,36 @@ pub const Households = struct {
             }
         }
 
-        // TODO:
         // clear the blackmark list
+        for (
+            slice.items(.blackmarked_firms_len),
+            slice.items(.blackmarked_firms_weights),
+        ) |*blackmarked_firms_len, *blackmarked_firms_weights| {
+            for (0..blackmarked_firms_len.*) |i| {
+                blackmarked_firms_weights[i] = 0;
+            }
+            blackmarked_firms_len.* = 0;
+        }
+
         // look for a job if household wants to
+        for (0..slice.len) |houshold_id| {
+            if (isUnhappyAtWork(slice, houshold_id, firms, &self.config, random)) {
+                lookForNewJob(slice, houshold_id, firms, &self.config, random);
+            }
+        }
+        // TODO:
         // plan consumption
+    }
+
+    pub fn fireWorker(
+        households: *const Slice,
+        index: usize,
+        employer_index: usize,
+    ) error{ AlreadyUnemployed, EmployerMismatch }!void {
+        const employer = &households.items(.employer)[index];
+        if (employer.* == null) return error.AlreadyUnemployed;
+        if (employer.*.? != employer_index) return error.EmployerMismatch;
+        employer.* = null;
     }
 
     fn findCheaperVendor(
@@ -256,14 +282,69 @@ pub const Households = struct {
         }
     }
 
-    pub fn fireWorker(
+    fn isUnhappyAtWork(
         households: *const Slice,
-        index: usize,
-        employer_index: usize,
-    ) error{ AlreadyUnemployed, EmployerMismatch }!void {
-        const employer = &households.items(.employer)[index];
-        if (employer.* == null) return error.AlreadyUnemployed;
-        if (employer.*.? != employer_index) return error.EmployerMismatch;
-        employer.* = null;
+        household_id: Id,
+        firms: *const FirmsSlice,
+        config: *const HouseholdConfig,
+        random: Random,
+    ) bool {
+        // unemployed
+        const employer = households.items(.employer)[household_id];
+        if (employer == null) return true;
+
+        // not paid enough
+        const wage = firms.items(.wage_rate)[employer];
+        const reservation_wage = households.items(.reservation_wage)[household_id];
+        if (wage < reservation_wage) return true;
+
+        // just feel like it
+        return core.withProbability(config.pi, random);
     }
+
+    fn lookForNewJob(
+        households: *const Slice,
+        household_id: Id,
+        firms: *const FirmsSlice,
+        config: *const HouseholdConfig,
+        random: Random,
+    ) void {
+        const employer = households.items(.employer)[household_id];
+        const num_searches = if (employer == null) config.beta else 1;
+        for (0..num_searches) |_| {
+            var potential_employer = random.intRangeLessThan(0, firms.len);
+            while (employer != null and potential_employer == employer) {
+                potential_employer = random.intRangeLessThan(0, firms.len);
+            }
+            if (is_acceptable_job_offer(households, household_id, firms, potential_employer)) {
+                if (employer != null) {
+                    // TODO: quit job
+                    // TODO: get hired at new firm
+                }
+
+            }
+        }
+    }
+
+    fn is_acceptable_job_offer(
+        households: *const Slice,
+        household_id: Id,
+        firms: *const FirmsSlice,
+        potential_employer: Id,
+    ) bool {
+        if (!firms.items(.has_open_position)[potential_employer]) return false;
+
+        const reservation_wage = households.items(.reservation_wage)[household_id];
+        const potential_wage = firms.items(.wage_rate)[potential_employer];
+        if (potential_wage > reservation_wage) return true;
+
+        const current_employer = (households.items(.employer)[household_id]);
+        if (current_employer == null) return false;
+
+        const current_wage = firms.items(.wage_rate)[current_employer];
+        if (potential_wage < current_wage) return true;
+
+        return false;
+    }
+
 };
