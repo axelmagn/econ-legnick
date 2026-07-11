@@ -160,7 +160,12 @@ pub const Households = struct {
         self.data.deinit(gpa);
     }
 
-    pub fn onMonthStart(self: *Households, random: Random, firms: *const FirmsSlice, month_length: usize) void {
+    pub fn onMonthStart(
+        self: *Households,
+        random: Random,
+        firms: *const FirmsSlice,
+        month_length: usize,
+    ) void {
         const slice = self.data.slice();
 
         // find cheaper vendor
@@ -197,6 +202,27 @@ pub const Households = struct {
         // plan consumption
         for (0..slice.len) |household_id| {
             planConsumption(&slice, household_id, &self.config, firms, month_length);
+        }
+    }
+
+    pub fn onMonthEnd(
+        self: *const Households,
+        firms: *const FirmsSlice,
+    ) void {
+        const slice = self.data.slice();
+        for (0..slice.len) |household_id| {
+            adjustReservationWage(&slice, household_id, &self.config, firms);
+        }
+    }
+
+    pub fn onDay(
+        self: *const Households,
+        firms: *const FirmsSlice,
+        random: Random,
+    ) void {
+        const slice = self.data.slice();
+        for (0..slice.len) |household_id| {
+            buyGoods(&slice, household_id, &self.config, firms, random);
         }
     }
 
@@ -378,5 +404,87 @@ pub const Households = struct {
         );
         const planned_consumption: GoodsAmount = @intFromFloat(planned_consumption_f32);
         current_demand.* = @divTrunc(planned_consumption, month_length);
+    }
+
+    fn adjustReservationWage(
+        households: *const Slice,
+        household_id: Id,
+        config: *const HouseholdConfig,
+        firms: *const FirmsSlice,
+    ) void {
+        const employer = households.items(.employer)[household_id];
+        const reservation_wage = &households.items(.reservation_wage)[household_id];
+        // if unemployed, reserve wage decays
+        if (employer == null) {
+            const reservation_wage_f32: f32 = @floatFromInt(reservation_wage.*);
+            reservation_wage.* = @intFromFloat(reservation_wage_f32 * config.wage_decay_rate);
+        } else {
+            const employer_wage = firms.items(.wage_rate)[employer.?];
+            reservation_wage.* = if (employer_wage > reservation_wage.*) employer_wage else reservation_wage.*;
+        }
+    }
+
+    fn buyGoods(
+        households: *const Slice,
+        household_id: Id,
+        config: *const HouseholdConfig,
+        firms: *const FirmsSlice,
+        random: Random,
+    ) void {
+        // put the preferred suppliers in a random order
+        const preferred_suppliers_len = households.items(.preferred_suppliers_len)[household_id];
+        const preferred_suppliers = &households.items(.preferred_suppliers)[household_id];
+        random.shuffle(Id, preferred_suppliers[0..preferred_suppliers_len]);
+
+        // obtain the required amount of goods
+        var required_amount = households.items(.current_demand)[household_id];
+        const liquidity = &households.items(.liquidity)[household_id];
+        var required_amount_f32: f32 = @floatFromInt(required_amount);
+        const satisfaction_amount = std.math.floor(required_amount_f32 * (1 - config.satisfaction_fraction));
+        for (preferred_suppliers[0..preferred_suppliers_len]) |vendor_id| {
+            const available_amount = firms.items(.inventory)[vendor_id];
+            var affordable_amount: GoodsAmount = std.math.maxInt(GoodsAmount);
+            const goods_price = firms.items(.goods_price)[vendor_id];
+            if (goods_price > 0) {
+                affordable_amount = @divTrunc(liquidity.*, goods_price);
+            }
+
+            // blackmark firm if it cannot supply full amount
+            if (available_amount < required_amount and available_amount < affordable_amount) {
+                // find or append blackmarked firm
+                var already_exists = false;
+                const weight: f32 = @floatFromInt(required_amount - available_amount);
+                const blackmarked_firms_len = &households.items(.blackmarked_firms_len)[household_id];
+                for (0..blackmarked_firms_len.*) |i| {
+                    if (vendor_id == households.items(.blackmarked_firms)[household_id][i]) {
+                        already_exists = true;
+                        households.items(.blackmarked_firms_weights)[household_id][i] += weight;
+                    }
+                }
+                if (!already_exists) {
+                    households.items(.blackmarked_firms)[household_id][blackmarked_firms_len.*] = vendor_id;
+                    households.items(.blackmarked_firms_weights)[household_id][blackmarked_firms_len.*] = weight;
+                    blackmarked_firms_len.* += 1;
+                }
+            }
+
+            var transaction_amount = required_amount;
+            if (available_amount < transaction_amount) transaction_amount = available_amount;
+            if (affordable_amount < transaction_amount) transaction_amount = affordable_amount;
+
+            // transact
+            const total_price = transaction_amount * goods_price;
+            std.debug.assert(firms.items(.inventory)[vendor_id] >= transaction_amount);
+            firms.items(.inventory)[vendor_id] -= transaction_amount;
+            firms.items(.liquidity)[vendor_id] += total_price;
+            std.debug.assert(liquidity.* >= total_price);
+            liquidity.* -= total_price;
+
+            required_amount -= transaction_amount;
+            required_amount_f32 = @floatFromInt(required_amount);
+            if (required_amount_f32 <= satisfaction_amount) return;
+        }
+
+        // TODO: record unsatisfied demand
     }
 };

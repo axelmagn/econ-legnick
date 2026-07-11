@@ -55,8 +55,10 @@ pub const Model = struct {
         if (is_month_end) {
             std.debug.print("step {} is the end of a month\n", .{self.steps});
             try self.firms.onMonthEnd(&households_slice, arena);
+            self.households.onMonthEnd(&firms_slice);
         }
         try self.firms.onDay(&households_slice, self.labor_supply, arena);
+        self.households.onDay(&firms_slice, random);
 
         // record statistics
         // TODO: use a real data structure instead of logging
