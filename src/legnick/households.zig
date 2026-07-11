@@ -279,6 +279,7 @@ pub const Households = struct {
         random: Random,
     ) void {
         const blackmarked_firms_len = households.items(.blackmarked_firms_len)[household_id];
+        if (blackmarked_firms_len == 0) return;
         const blackmarked_firms = &households.items(.blackmarked_firms)[household_id];
         const blackmarked_firms_weights = &households.items(.blackmarked_firms_weights)[household_id];
 
