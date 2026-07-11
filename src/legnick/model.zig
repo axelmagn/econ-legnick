@@ -49,7 +49,7 @@ pub const Model = struct {
         if (is_month_start) {
             std.debug.print("step {} is the start of a new month\n", .{self.steps});
             self.firms.onMonthStart(&households_slice, households_order, random);
-            self.households.onMonthStart(random, &firms_slice);
+            self.households.onMonthStart(random, &firms_slice, self.month_length);
         }
         const is_month_end = (self.steps + 1) % self.month_length == 0;
         if (is_month_end) {

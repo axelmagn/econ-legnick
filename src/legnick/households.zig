@@ -61,8 +61,7 @@ pub const Household = struct {
     /// amount of money household possesses
     liquidity: Currency,
     /// how many goods to buy each day
-    /// NOTE: not convinced that this needs to be state.
-    // current_demand: GoodsAmount,
+    current_demand: GoodsAmount = 0,
 
     /// number of firms household prefers to buy from
     preferred_suppliers_len: usize = 0,
@@ -161,7 +160,7 @@ pub const Households = struct {
         self.data.deinit(gpa);
     }
 
-    pub fn onMonthStart(self: *Households, random: Random, firms: *const FirmsSlice) !void {
+    pub fn onMonthStart(self: *Households, random: Random, firms: *const FirmsSlice, month_length: usize) void {
         const slice = self.data.slice();
 
         // find cheaper vendor
@@ -190,13 +189,15 @@ pub const Households = struct {
         }
 
         // look for a job if household wants to
-        for (0..slice.len) |houshold_id| {
-            if (isUnhappyAtWork(slice, houshold_id, firms, &self.config, random)) {
-                lookForNewJob(slice, houshold_id, firms, &self.config, random);
+        for (0..slice.len) |household_id| {
+            if (isUnhappyAtWork(&slice, household_id, firms, &self.config, random)) {
+                lookForNewJob(&slice, household_id, firms, &self.config, random);
             }
         }
-        // TODO:
         // plan consumption
+        for (0..slice.len) |household_id| {
+            planConsumption(&slice, household_id, &self.config, firms, month_length);
+        }
     }
 
     pub fn fireWorker(
@@ -218,7 +219,7 @@ pub const Households = struct {
         config: *const HouseholdConfig,
     ) void {
         const preferred_suppliers_len = households.items(.preferred_suppliers_len)[household_id];
-        const preferred_suppliers = &households.item(.preferred_suppliers)[household_id];
+        const preferred_suppliers = &households.items(.preferred_suppliers)[household_id];
 
         // pick a random existing supplier and calculate the price to beat
         const existing_supplier_idx = random.intRangeLessThan(Id, 0, preferred_suppliers_len);
@@ -239,7 +240,7 @@ pub const Households = struct {
             if (!is_in_preferred) break;
             candidate_id = random.intRangeLessThan(Id, 0, firms.len);
         }
-        const candidate_price = firms.items(.goods_price)[candidate_id];
+        const candidate_price: f32 = @floatFromInt(firms.items(.goods_price)[candidate_id]);
         if (candidate_price < price_to_beat) {
             preferred_suppliers[existing_supplier_idx] = candidate_id;
         }
@@ -294,7 +295,7 @@ pub const Households = struct {
         if (employer == null) return true;
 
         // not paid enough
-        const wage = firms.items(.wage_rate)[employer];
+        const wage = firms.items(.wage_rate)[employer.?];
         const reservation_wage = households.items(.reservation_wage)[household_id];
         if (wage < reservation_wage) return true;
 
@@ -309,24 +310,21 @@ pub const Households = struct {
         config: *const HouseholdConfig,
         random: Random,
     ) void {
-        const employer = households.items(.employer)[household_id];
-        const num_searches = if (employer == null) config.beta else 1;
+        const employer = &households.items(.employer)[household_id];
+        const num_searches = if (employer.* == null) config.beta else 1;
         for (0..num_searches) |_| {
-            var potential_employer = random.intRangeLessThan(0, firms.len);
-            while (employer != null and potential_employer == employer) {
-                potential_employer = random.intRangeLessThan(0, firms.len);
+            var potential_employer = random.intRangeLessThan(usize, 0, firms.len);
+            while (employer.* != null and potential_employer == employer.*) {
+                potential_employer = random.intRangeLessThan(usize, 0, firms.len);
             }
-            if (is_acceptable_job_offer(households, household_id, firms, potential_employer)) {
-                if (employer != null) {
-                    // TODO: quit job
-                    // TODO: get hired at new firm
-                }
-
+            if (isAcceptableJobOffer(households, household_id, firms, potential_employer)) {
+                employer.* = potential_employer;
+                firms.items(.has_open_position)[potential_employer] = false;
             }
         }
     }
 
-    fn is_acceptable_job_offer(
+    fn isAcceptableJobOffer(
         households: *const Slice,
         household_id: Id,
         firms: *const FirmsSlice,
@@ -338,13 +336,47 @@ pub const Households = struct {
         const potential_wage = firms.items(.wage_rate)[potential_employer];
         if (potential_wage > reservation_wage) return true;
 
-        const current_employer = (households.items(.employer)[household_id]);
+        const current_employer = households.items(.employer)[household_id];
         if (current_employer == null) return false;
 
-        const current_wage = firms.items(.wage_rate)[current_employer];
+        const current_wage = firms.items(.wage_rate)[current_employer.?];
         if (potential_wage < current_wage) return true;
 
         return false;
     }
 
+    fn planConsumption(
+        households: *const Slice,
+        household_id: Id,
+        config: *const HouseholdConfig,
+        firms: *const FirmsSlice,
+        month_length: usize,
+    ) void {
+        const current_demand = &households.items(.current_demand)[household_id];
+        const preferred_suppliers_len = households.items(.preferred_suppliers_len)[household_id];
+        if (preferred_suppliers_len == 0) {
+            current_demand.* = std.math.maxInt(GoodsAmount);
+            return;
+        }
+
+        // calculate average goods price
+        var average_goods_price: f32 = 0;
+        const preferred_suppliers = &households.items(.preferred_suppliers)[household_id];
+        for (0..preferred_suppliers_len) |i| {
+            const supplier = preferred_suppliers[i];
+            const goods_price = firms.items(.goods_price)[supplier];
+            average_goods_price += @floatFromInt(goods_price);
+        }
+        const preferred_suppliers_len_f32: f32 = @floatFromInt(preferred_suppliers_len);
+        average_goods_price = @divExact(average_goods_price, preferred_suppliers_len_f32);
+
+        const liquidity: f32 = @floatFromInt(households.items(.liquidity)[household_id]);
+        const planned_consumption_f32 = std.math.pow(
+            f32,
+            @divExact(liquidity, average_goods_price),
+            config.alpha,
+        );
+        const planned_consumption: GoodsAmount = @intFromFloat(planned_consumption_f32);
+        current_demand.* = @divTrunc(planned_consumption, month_length);
+    }
 };
