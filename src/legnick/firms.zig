@@ -197,7 +197,7 @@ pub const Firms = struct {
             var wage_rate_f32: f32 = @floatFromInt(wage_rate.*);
             wage_rate_f32 *= 1 - random.floatNorm(f32) * config.delta;
             wage_rate.* = @intFromFloat(std.math.round(wage_rate_f32));
-            log.debug("firm {} lowered wages to {}\n", .{ index, wage_rate.* });
+            // log.debug("firm {} lowered wages to {}\n", .{ index, wage_rate.* });
         }
     }
 
@@ -224,8 +224,9 @@ pub const Firms = struct {
                 worker_on_notice.*.?,
                 firm_id,
             ) catch |err| {
-                // errors here indicate state inconsistency
-                std.debug.panic("fatal error while firing worker: {}\n", .{err});
+                switch (err) {
+                    error.AlreadyUnemployed, error.EmployerMismatch => {},
+                }
             };
             worker_on_notice.* = null;
         }
@@ -318,9 +319,11 @@ pub const Firms = struct {
         firms: *const Slice,
         firm_id: usize,
         config: *const FirmConfig,
-    ) GoodsAmount {
-        const goods_price: GoodsAmount = firms.items(.goods_price)[firm_id];
-        const floor_f32 = config.goods_price_lphi * @as(f32, @floatFromInt(goods_price));
+    ) Currency {
+        const wage_rate = firms.items(.wage_rate)[firm_id];
+        const marginal_cost_deflator = firms.items(.marginal_cost_deflator)[firm_id];
+        const marginal_cost = @as(f32, @floatFromInt(wage_rate)) / marginal_cost_deflator;
+        const floor_f32 = config.goods_price_lphi * marginal_cost;
         return @intFromFloat(std.math.ceil(floor_f32));
     }
 
@@ -328,9 +331,11 @@ pub const Firms = struct {
         firms: *const Slice,
         firm_id: usize,
         config: *const FirmConfig,
-    ) GoodsAmount {
-        const goods_price: GoodsAmount = firms.items(.goods_price)[firm_id];
-        const ceil_f32 = config.goods_price_uphi * @as(f32, @floatFromInt(goods_price));
+    ) Currency {
+        const wage_rate = firms.items(.wage_rate)[firm_id];
+        const marginal_cost_deflator = firms.items(.marginal_cost_deflator)[firm_id];
+        const marginal_cost = @as(f32, @floatFromInt(wage_rate)) / marginal_cost_deflator;
+        const ceil_f32 = config.goods_price_uphi * marginal_cost;
         return @intFromFloat(std.math.floor(ceil_f32));
     }
 
@@ -358,7 +363,7 @@ pub const Firms = struct {
             const wage_rate = &firms.items(.wage_rate)[firm_id];
             if (liquidity.* < num_workers) {
                 wage_rate.* = 0;
-                return;
+                continue;
             }
             // if we can't pay all of our workers, reduce wages
             if (liquidity.* < num_workers * wage_rate.*) {

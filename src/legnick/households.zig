@@ -450,6 +450,9 @@ pub const Households = struct {
                 affordable_amount = @divTrunc(liquidity.*, goods_price);
             }
 
+            const requested_amount = @min(required_amount, affordable_amount);
+            firms.items(.current_demand)[vendor_id] += requested_amount;
+
             // blackmark firm if it cannot supply full amount
             if (available_amount < required_amount and available_amount < affordable_amount) {
                 // find or append blackmarked firm
