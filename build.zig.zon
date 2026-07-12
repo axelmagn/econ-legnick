@@ -1,6 +1,20 @@
 .{
     .name = .econ_legnick,
     .version = "0.0.1",
+    .dependencies = .{
+        .zgui = .{
+            .url = "git+https://github.com/zig-gamedev/zgui.git?ref=main#bfbebed372723d1f585f86fc0a550232b3427f4d",
+            .hash = "zgui-0.6.0-dev--L6sZJhIbgAjWdK5h6xuVUrsOcD-RdqEOEPf03Zgi4mF",
+        },
+        .zglfw = .{
+            .url = "git+https://github.com/zig-gamedev/zglfw.git?ref=main#51003c105d23db378bb59ce415a387b22f1b0892",
+            .hash = "zglfw-0.10.0-dev-zgVDNIy4IQDJNRy4jrP1As-SZxfJpuWhU1iJ-wBab_VD",
+        },
+        .zopengl = .{
+            .url = "git+https://github.com/zig-gamedev/zopengl.git?ref=main#29908b1ba2d91baf91e348f6cd192630488d77b6",
+            .hash = "zopengl-0.6.0-dev-5-tnz32mDgB82moljuLD0fmbj1mU3NSCXjzttpmoV2iP",
+        },
+    },
     .minimum_zig_version = "0.16.0",
     .paths = .{""},
     .fingerprint = 0xd2b2ae1e82bc2a8,

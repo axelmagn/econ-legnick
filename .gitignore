@@ -1,3 +1,4 @@
 /.zig-cache
-/zig-out
 /simulation_stats.csv
+/zig-out
+/zig-pkg
