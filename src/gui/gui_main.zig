@@ -1,8 +1,8 @@
 const std = @import("std");
 const legnick = @import("legnick");
-const glfw = @import("zglfw");
-const gl = @import("zopengl");
-const zgui = @import("zgui");
+const app = @import("appimgui");
+const ig = app.ig;
+const implot = @import("implot");
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
@@ -12,35 +12,16 @@ pub fn main(init: std.process.Init) !void {
     var step_arena = std.heap.ArenaAllocator.init(allocator);
     defer step_arena.deinit();
 
-    // Initialize GLFW
-    try glfw.init();
-    defer glfw.terminate();
+    // Create Window using appimgui (GLFW + OpenGL backend)
+    var window = try app.Window.createImGui(1280, 720, "Legnick Macroeconomic Simulation");
+    defer window.destroyImGui();
 
-    glfw.windowHint(.context_version_major, 3);
-    glfw.windowHint(.context_version_minor, 3);
-    glfw.windowHint(.opengl_profile, .opengl_core_profile);
-    glfw.windowHint(.opengl_forward_compat, true);
+    // Set styling and dark colors
+    ig.igStyleColorsDark(null);
 
-    const window = try glfw.Window.create(1280, 720, "Legnick Macroeconomic Simulation", null, null);
-    defer window.destroy();
-
-    glfw.makeContextCurrent(window);
-    glfw.swapInterval(1); // v-sync
-
-    // Initialize OpenGL
-    try gl.loadCoreProfile(glfw.getProcAddress, 3, 3);
-    const gld = gl.bindings;
-
-    // Initialize ImGui
-    zgui.init(allocator);
-    defer zgui.deinit();
-
-    zgui.plot.init();
-    defer zgui.plot.deinit();
-
-    // Initialize the zgui built-in GLFW + OpenGL backend
-    zgui.backend.initWithGlSlVersion(window, "#version 150");
-    defer zgui.backend.deinit();
+    // Initialize ImPlot Context
+    _ = implot.ImPlot_CreateContext();
+    defer implot.ImPlot_DestroyContext(null);
 
     // Initialize Simulation Model
     var model = try legnick.model.Model.init(init.io, init_arena.allocator(), 100, 1000, 42);
@@ -77,7 +58,8 @@ pub fn main(init: std.process.Init) !void {
     defer history_inventory.deinit(allocator);
 
     while (!window.shouldClose()) {
-        glfw.pollEvents();
+        window.pollEvents();
+        if (window.isIconified()) continue;
 
         // 1. Run simulation steps at the selected speed
         const current_time = std.Io.Timestamp.now(init.io, .awake);
@@ -131,122 +113,110 @@ pub fn main(init: std.process.Init) !void {
         }
 
         // 2. Start new ImGui frame
-        const size = window.getFramebufferSize();
-        zgui.backend.newFrame(@intCast(size[0]), @intCast(size[1]));
+        window.frame();
 
         // 3. Render UI Window
-        zgui.setNextWindowPos(.{ .x = 10, .y = 10 });
-        zgui.setNextWindowSize(.{ .w = 1260, .h = 700 });
+        ig.igSetNextWindowPos(.{ .x = 10, .y = 10 }, 0, .{ .x = 0, .y = 0 });
+        ig.igSetNextWindowSize(.{ .x = 1260, .y = 700 }, 0);
         
-        if (zgui.begin("Legnick Baseline Economy Simulation", .{
-            .flags = .{
-                .no_title_bar = true,
-                .no_resize = true,
-                .no_move = true,
-                .no_collapse = true,
-            },
-        })) {
-            zgui.text("Simulation Status", .{});
-            zgui.separator();
+        const win_flags = ig.ImGuiWindowFlags_NoTitleBar | ig.ImGuiWindowFlags_NoResize | 
+                          ig.ImGuiWindowFlags_NoMove | ig.ImGuiWindowFlags_NoCollapse;
+        
+        if (ig.igBegin("Legnick Baseline Economy Simulation", null, win_flags)) {
+            ig.igText("Simulation Status");
+            ig.igSeparator();
 
             // Controls
             if (run_sim) {
-                if (zgui.button("Pause", .{})) run_sim = false;
+                if (ig.igButton("Pause", .{ .x = 0, .y = 0 })) run_sim = false;
             } else {
-                if (zgui.button("Play", .{})) run_sim = true;
+                if (ig.igButton("Play", .{ .x = 0, .y = 0 })) run_sim = true;
             }
-            zgui.sameLine(.{});
-            if (zgui.button("Step Once", .{})) {
+            ig.igSameLine(0, -1);
+            if (ig.igButton("Step Once", .{ .x = 0, .y = 0 })) {
                 try model.step(step_arena.allocator());
                 _ = step_arena.reset(.retain_capacity);
                 step_count += 1;
             }
             
-            zgui.sameLine(.{});
-            _ = zgui.sliderInt("Steps / Sec", .{
-                .v = &steps_per_second,
-                .min = 1,
-                .max = 100,
-            });
+            ig.igSameLine(0, -1);
+            _ = ig.igSliderInt("Steps / Sec", &steps_per_second, 1, 100, "%d", 0);
 
-            zgui.text("Simulated Days: {d} | Months: {d} | Total Steps: {d}", .{
+            var buf: [256]u8 = undefined;
+            const text = std.fmt.bufPrintZ(&buf, "Simulated Days: {d} | Months: {d} | Total Steps: {d}", .{
                 model.steps,
                 model.steps / model.month_length,
                 step_count,
-            });
+            }) catch "Error formatting text";
+            ig.igTextUnformatted(text.ptr, null);
 
-            zgui.separator();
+            ig.igSeparator();
 
             // Plots layout (2x2 grid)
-            if (zgui.beginChild("Plots", .{ .w = 0, .h = 0 })) {
-                const w = (zgui.getWindowWidth() - 30) / 2.0;
-                const h = (zgui.getWindowHeight() - 100) / 2.0;
+            if (ig.igBeginChild_Str("Plots", .{ .x = 0, .y = 0 }, 0, 0)) {
+                const w = (ig.igGetWindowWidth() - 30) / 2.0;
+                const h = (ig.igGetWindowHeight() - 100) / 2.0;
 
                 // Plot 1: Liquidity
-                if (zgui.plot.beginPlot("Liquidity (in $)", .{ .w = w, .h = h })) {
-                    zgui.plot.setupAxis(.x1, .{ .label = "Steps", .flags = .{ .auto_fit = true } });
-                    zgui.plot.setupAxis(.y1, .{ .label = "Liquidity", .flags = .{ .auto_fit = true } });
-                    zgui.plot.setupFinish();
+                if (implot.ImPlot_BeginPlot("Liquidity (in $)", .{ .x = w, .y = h }, 0)) {
+                    implot.ImPlot_SetupAxis(implot.ImAxis_X1, "Steps", implot.ImPlotAxisFlags_AutoFit);
+                    implot.ImPlot_SetupAxis(implot.ImAxis_Y1, "Liquidity", implot.ImPlotAxisFlags_AutoFit);
+                    implot.ImPlot_SetupFinish();
                     if (history_steps.items.len > 0) {
-                        zgui.plot.plotLine("Total", f32, .{ .xv = history_steps.items, .yv = history_total_liq.items });
-                        zgui.plot.plotLine("Households", f32, .{ .xv = history_steps.items, .yv = history_hh_liq.items });
-                        zgui.plot.plotLine("Firms", f32, .{ .xv = history_steps.items, .yv = history_firm_liq.items });
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Total", history_steps.items.ptr, history_total_liq.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Households", history_steps.items.ptr, history_hh_liq.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Firms", history_steps.items.ptr, history_firm_liq.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
                     }
-                    zgui.plot.endPlot();
+                    implot.ImPlot_EndPlot();
                 }
 
-                zgui.sameLine(.{});
+                ig.igSameLine(0, -1);
 
                 // Plot 2: Employment
-                if (zgui.plot.beginPlot("Employment", .{ .w = w, .h = h })) {
-                    zgui.plot.setupAxis(.x1, .{ .label = "Steps", .flags = .{ .auto_fit = true } });
-                    zgui.plot.setupAxis(.y1, .{ .label = "People / Vacancies", .flags = .{ .auto_fit = true } });
-                    zgui.plot.setupFinish();
+                if (implot.ImPlot_BeginPlot("Employment", .{ .x = w, .y = h }, 0)) {
+                    implot.ImPlot_SetupAxis(implot.ImAxis_X1, "Steps", implot.ImPlotAxisFlags_AutoFit);
+                    implot.ImPlot_SetupAxis(implot.ImAxis_Y1, "People / Vacancies", implot.ImPlotAxisFlags_AutoFit);
+                    implot.ImPlot_SetupFinish();
                     if (history_steps.items.len > 0) {
-                        zgui.plot.plotLine("Employed", f32, .{ .xv = history_steps.items, .yv = history_employed.items });
-                        zgui.plot.plotLine("Unemployed", f32, .{ .xv = history_steps.items, .yv = history_unemployed.items });
-                        zgui.plot.plotLine("Open Positions", f32, .{ .xv = history_steps.items, .yv = history_open_positions.items });
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Employed", history_steps.items.ptr, history_employed.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Unemployed", history_steps.items.ptr, history_unemployed.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Open Positions", history_steps.items.ptr, history_open_positions.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
                     }
-                    zgui.plot.endPlot();
+                    implot.ImPlot_EndPlot();
                 }
 
                 // Plot 3: Prices & Wages
-                if (zgui.plot.beginPlot("Prices & Wages (Average in $)", .{ .w = w, .h = h })) {
-                    zgui.plot.setupAxis(.x1, .{ .label = "Steps", .flags = .{ .auto_fit = true } });
-                    zgui.plot.setupAxis(.y1, .{ .label = "Wage/Price", .flags = .{ .auto_fit = true } });
-                    zgui.plot.setupFinish();
+                if (implot.ImPlot_BeginPlot("Prices & Wages (Average in $)", .{ .x = w, .y = h }, 0)) {
+                    implot.ImPlot_SetupAxis(implot.ImAxis_X1, "Steps", implot.ImPlotAxisFlags_AutoFit);
+                    implot.ImPlot_SetupAxis(implot.ImAxis_Y1, "Wage/Price", implot.ImPlotAxisFlags_AutoFit);
+                    implot.ImPlot_SetupFinish();
                     if (history_steps.items.len > 0) {
-                        zgui.plot.plotLine("Avg Price", f32, .{ .xv = history_steps.items, .yv = history_avg_price.items });
-                        zgui.plot.plotLine("Avg Wage", f32, .{ .xv = history_steps.items, .yv = history_avg_wage.items });
-                        zgui.plot.plotLine("Avg Res. Wage", f32, .{ .xv = history_steps.items, .yv = history_avg_res_wage.items });
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Avg Price", history_steps.items.ptr, history_avg_price.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Avg Wage", history_steps.items.ptr, history_avg_wage.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Avg Res. Wage", history_steps.items.ptr, history_avg_res_wage.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
                     }
-                    zgui.plot.endPlot();
+                    implot.ImPlot_EndPlot();
                 }
 
-                zgui.sameLine(.{});
+                ig.igSameLine(0, -1);
 
                 // Plot 4: Inventory
-                if (zgui.plot.beginPlot("Inventories (Total Goods)", .{ .w = w, .h = h })) {
-                    zgui.plot.setupAxis(.x1, .{ .label = "Steps", .flags = .{ .auto_fit = true } });
-                    zgui.plot.setupAxis(.y1, .{ .label = "Goods Quantity", .flags = .{ .auto_fit = true } });
-                    zgui.plot.setupFinish();
+                if (implot.ImPlot_BeginPlot("Inventories (Total Goods)", .{ .x = w, .y = h }, 0)) {
+                    implot.ImPlot_SetupAxis(implot.ImAxis_X1, "Steps", implot.ImPlotAxisFlags_AutoFit);
+                    implot.ImPlot_SetupAxis(implot.ImAxis_Y1, "Goods Quantity", implot.ImPlotAxisFlags_AutoFit);
+                    implot.ImPlot_SetupFinish();
                     if (history_steps.items.len > 0) {
-                        zgui.plot.plotLine("Inventory", f32, .{ .xv = history_steps.items, .yv = history_inventory.items });
+                        implot.ImPlot_PlotLine_FloatPtrFloatPtr("Inventory", history_steps.items.ptr, history_inventory.items.ptr, @intCast(history_steps.items.len), 0, 0, @intCast(@sizeOf(f32)));
                     }
-                    zgui.plot.endPlot();
+                    implot.ImPlot_EndPlot();
                 }
 
-                zgui.endChild();
+                ig.igEndChild();
             }
         }
-        zgui.end();
+        ig.igEnd();
 
         // 4. OpenGL Render
-        gld.clearColor(0.15, 0.16, 0.18, 1.00);
-        gld.clear(gld.COLOR_BUFFER_BIT);
-
-        zgui.backend.draw();
-
-        window.swapBuffers();
+        window.render();
     }
 }

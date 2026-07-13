@@ -34,23 +34,25 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{.{ .name = "legnick", .module = legnick_mod }},
         }),
+        .use_llvm = true,
+    });
+    // GUI dependencies - configure imguinz
+    const imguinz = b.dependency("imguinz", .{
+        .target = target,
+        .optimize = optimize,
     });
 
-    // GUI dependencies - configure zgui with glfw_opengl3 backend
-    const zgui = b.dependency("zgui", .{
-        .shared = false,
-        .with_implot = true,
-        .backend = .glfw_opengl3,
+    const appimgui_dep = imguinz.builder.dependency("appimgui", .{
+        .target = target,
+        .optimize = optimize,
     });
-    const zglfw = b.dependency("zglfw", .{});
-    const zopengl = b.dependency("zopengl", .{});
+    const implot_dep = imguinz.builder.dependency("implot", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
-    legnick_sim_gui_exe.root_module.addImport("zgui", zgui.module("root"));
-    legnick_sim_gui_exe.root_module.addImport("zglfw", zglfw.module("root"));
-    legnick_sim_gui_exe.root_module.addImport("zopengl", zopengl.module("root"));
-
-    legnick_sim_gui_exe.root_module.linkLibrary(zgui.artifact("imgui"));
-    legnick_sim_gui_exe.root_module.linkLibrary(zglfw.artifact("glfw"));
+    legnick_sim_gui_exe.root_module.addImport("appimgui", appimgui_dep.module("appimgui"));
+    legnick_sim_gui_exe.root_module.addImport("implot", implot_dep.module("implot"));
 
     b.installArtifact(legnick_sim_gui_exe);
 }
