@@ -219,10 +219,11 @@ pub const Households = struct {
         self: *const Households,
         firms: *const FirmsSlice,
         random: Random,
+        days_left: usize,
     ) void {
         const slice = self.data.slice();
         for (0..slice.len) |household_id| {
-            buyGoods(&slice, household_id, &self.config, firms, random);
+            buyGoods(&slice, household_id, &self.config, firms, random, days_left);
         }
     }
 
@@ -347,6 +348,7 @@ pub const Households = struct {
             if (isAcceptableJobOffer(households, household_id, firms, potential_employer)) {
                 employer.* = potential_employer;
                 firms.items(.has_open_position)[potential_employer] = false;
+                break;
             }
         }
     }
@@ -367,7 +369,7 @@ pub const Households = struct {
         if (current_employer == null) return false;
 
         const current_wage = firms.items(.wage_rate)[current_employer.?];
-        if (potential_wage < current_wage) return true;
+        if (potential_wage > current_wage) return true;
 
         return false;
     }
@@ -379,6 +381,7 @@ pub const Households = struct {
         firms: *const FirmsSlice,
         month_length: usize,
     ) void {
+        _ = month_length;
         const current_demand = &households.items(.current_demand)[household_id];
         const preferred_suppliers_len = households.items(.preferred_suppliers_len)[household_id];
         if (preferred_suppliers_len == 0) {
@@ -404,7 +407,7 @@ pub const Households = struct {
             config.alpha,
         );
         const planned_consumption: GoodsAmount = @intFromFloat(planned_consumption_f32);
-        current_demand.* = @divTrunc(planned_consumption, month_length);
+        current_demand.* = planned_consumption;
     }
 
     fn adjustReservationWage(
@@ -431,14 +434,23 @@ pub const Households = struct {
         config: *const HouseholdConfig,
         firms: *const FirmsSlice,
         random: Random,
+        days_left: usize,
     ) void {
         // put the preferred suppliers in a random order
         const preferred_suppliers_len = households.items(.preferred_suppliers_len)[household_id];
         const preferred_suppliers = &households.items(.preferred_suppliers)[household_id];
         random.shuffle(Id, preferred_suppliers[0..preferred_suppliers_len]);
 
-        // obtain the required amount of goods
-        var required_amount = households.items(.current_demand)[household_id];
+        const current_demand = &households.items(.current_demand)[household_id];
+        if (current_demand.* == 0) return;
+
+        var required_amount: GoodsAmount = 0;
+        if (current_demand.* == std.math.maxInt(GoodsAmount)) {
+            required_amount = std.math.maxInt(GoodsAmount);
+        } else {
+            required_amount = @divTrunc(current_demand.* + days_left - 1, days_left);
+        }
+
         const liquidity = &households.items(.liquidity)[household_id];
         var required_amount_f32: f32 = @floatFromInt(required_amount);
         const satisfaction_amount = std.math.floor(required_amount_f32 * (1 - config.satisfaction_fraction));
@@ -481,8 +493,13 @@ pub const Households = struct {
             std.debug.assert(firms.items(.inventory)[vendor_id] >= transaction_amount);
             firms.items(.inventory)[vendor_id] -= transaction_amount;
             firms.items(.liquidity)[vendor_id] += total_price;
+            firms.items(.monthly_revenue)[vendor_id] += total_price;
             std.debug.assert(liquidity.* >= total_price);
             liquidity.* -= total_price;
+
+            if (current_demand.* != std.math.maxInt(GoodsAmount)) {
+                current_demand.* -= transaction_amount;
+            }
 
             required_amount -= transaction_amount;
             required_amount_f32 = @floatFromInt(required_amount);

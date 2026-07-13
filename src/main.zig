@@ -7,7 +7,15 @@ pub fn main(init: std.process.Init) !void {
     var step_arena = std.heap.ArenaAllocator.init(init.gpa);
     defer step_arena.deinit();
 
-    var model = try legnick.model.Model.init(init.io, init_arena.allocator(), 100, 1000, 42);
+    var model = try legnick.model.Model.init(
+        init.io,
+        init_arena.allocator(),
+        100,
+        1000,
+        42,
+        128 * 3000, // default firm initial liquidity (384,000 cents)
+        30 * 3000,  // default household initial liquidity (90,000 cents)
+    );
     std.debug.print("model populated!\n", .{});
 
     const num_steps = 1000;

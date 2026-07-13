@@ -21,12 +21,16 @@ pub const Model = struct {
         num_firms: usize,
         num_households: usize,
         seed: u64,
+        initial_firm_liquidity: core.Currency,
+        initial_household_liquidity: core.Currency,
     ) !Model { // TODO: explicit errors
         var self: Model = .{
             .prng = std.Random.DefaultPrng.init(seed),
             .io = io,
             .stats_file = try std.Io.Dir.cwd().createFile(io, "simulation_stats.csv", .{}),
         };
+        self.firms.config.initial_liquidity = initial_firm_liquidity;
+        self.households.config.initial_liquidity = initial_household_liquidity;
         try self.firms.populate(num_firms, self.labor_supply, self.month_length, gpa);
         try self.households.populate(num_households, num_firms, gpa, self.prng.random());
         try self.stats_file.writeStreamingAll(self.io, StepStats.csv_header);
@@ -61,8 +65,9 @@ pub const Model = struct {
             try self.firms.onMonthEnd(&households_slice, arena);
             self.households.onMonthEnd(&firms_slice);
         }
+        const days_left = self.month_length - (self.steps % self.month_length);
         try self.firms.onDay(&households_slice, self.labor_supply, arena);
-        self.households.onDay(&firms_slice, random);
+        self.households.onDay(&firms_slice, random, days_left);
 
         // record statistics
         try self.logStats();

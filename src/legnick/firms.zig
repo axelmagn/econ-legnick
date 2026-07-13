@@ -67,6 +67,7 @@ pub const Firm = struct {
     inventory: GoodsAmount,
     current_demand: GoodsAmount,
     marginal_cost_deflator: f32,
+    monthly_revenue: Currency = 0,
 
     worker_on_notice: ?Id = null,
     has_open_position: bool = false,
@@ -102,6 +103,7 @@ pub const Firms = struct {
                 .inventory = self.config.initial_inventory,
                 .current_demand = self.config.expected_demand,
                 .marginal_cost_deflator = self.config.lambda_val * labor_supply * month_length_f32,
+                .monthly_revenue = 0,
             };
             assert(self.data.len < self.data.capacity);
             self.data.appendAssumeCapacity(firm);
@@ -153,6 +155,35 @@ pub const Firms = struct {
 
         // pay wages
         try payWages(&slice, households_slice, arena);
+
+        // calculate and distribute dividends
+        var total_dividends: Currency = 0;
+        for (0..slice.len) |firm_id| {
+            const liquidity = &slice.items(.liquidity)[firm_id];
+            const monthly_revenue = &slice.items(.monthly_revenue)[firm_id];
+
+            const revenue_f32: f32 = @floatFromInt(monthly_revenue.*);
+            const buffer_f32 = self.config.chi * revenue_f32;
+            const buffer: Currency = @intFromFloat(std.math.round(buffer_f32));
+
+            if (liquidity.* > buffer) {
+                const dividend = liquidity.* - buffer;
+                total_dividends += dividend;
+                liquidity.* = buffer;
+            }
+            monthly_revenue.* = 0;
+        }
+
+        if (total_dividends > 0) {
+            const div_per_household = @divTrunc(total_dividends, households_slice.len);
+            const remainder = total_dividends % households_slice.len;
+            for (households_slice.items(.liquidity), 0..) |*liq, idx| {
+                liq.* += div_per_household;
+                if (idx < remainder) {
+                    liq.* += 1;
+                }
+            }
+        }
 
         // check for hire failures
         for (
